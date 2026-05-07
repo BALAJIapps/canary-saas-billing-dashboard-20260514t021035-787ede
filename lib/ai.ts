@@ -1,63 +1,93 @@
 /**
- * AI client — pre-wired to the Baljia AI Gateway.
+ * AI client — pre-wired for founder apps.
  *
- * The gateway is wire-compatible with Anthropic's /v1/messages and OpenAI's
- * /v1/chat/completions. You use the official SDKs with nothing changed but
- * the base URL and API key. The gateway decides whether to route your call
- * through your own BYOK key (if you pasted one in Settings) or the Baljia
- * platform key (on the free tier, subject to monthly token quota).
+ * Dev/staging: Uses Google Gemini (free tier, OpenAI-compatible endpoint).
+ * Production:  Swap AI_GATEWAY_URL + AI_GATEWAY_TOKEN to point at the
+ *              Baljia AI Gateway for per-company billing and model switching.
  *
- * When you go BYOK, nothing in your code changes. The switch happens in
- * Baljia's control plane.
+ * Zero-key policy: founders never paste API keys. The platform operator
+ * sets these env vars once and all apps share them.
  */
 
-import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
-import { anthropic as anthropicProvider } from "@ai-sdk/anthropic";
-import { createAnthropic } from "@ai-sdk/anthropic";
 
-const baseURL = process.env.AI_GATEWAY_URL;
-const apiKey = process.env.AI_GATEWAY_TOKEN;
+const baseURL = process.env.AI_GATEWAY_URL ?? "https://generativelanguage.googleapis.com/v1beta/openai";
+const apiKey = process.env.AI_GATEWAY_TOKEN ?? process.env.GEMINI_API_KEY ?? "";
 
-if (!baseURL || !apiKey) {
-  // Warn loudly in dev; don't throw because builds (which don't make calls)
-  // would fail on clones that haven't filled env yet.
-  if (typeof window === "undefined" && process.env.NODE_ENV !== "production") {
-    console.warn(
-      "[ai] AI_GATEWAY_URL / AI_GATEWAY_TOKEN not set — AI features will fail at runtime.",
-    );
-  }
+if (!apiKey && process.env.NODE_ENV !== "production") {
+  console.warn(
+    "[ai] AI_GATEWAY_TOKEN / GEMINI_API_KEY not set — AI features will fail at runtime.",
+  );
 }
 
 /**
- * Official Anthropic SDK pointed at the Baljia gateway.
- * Use for single-turn calls, streaming, and anything SDK-native.
- */
-export const anthropic = new Anthropic({
-  baseURL,
-  apiKey: apiKey ?? "not-set",
-});
-
-/**
- * Official OpenAI SDK pointed at the Baljia gateway.
+ * OpenAI-compatible client pointed at Gemini (or the Baljia gateway in prod).
+ * Gemini's OpenAI-compatible endpoint accepts the same request format.
+ * Default model: gemini-2.0-flash (fast, free tier, large context).
  */
 export const openai = new OpenAI({
-  baseURL: baseURL ? `${baseURL}/v1` : undefined,
-  apiKey: apiKey ?? "not-set",
+  baseURL,
+  apiKey,
 });
+
+/** Default model for text generation. Override per-call for heavier tasks. */
+export const DEFAULT_MODEL = "gemini-2.0-flash";
+
+/** Faster/cheaper model for simple tasks (classification, extraction). */
+export const FAST_MODEL = "gemini-2.0-flash";
+
+/** Powerful model for complex reasoning tasks. */
+export const SMART_MODEL = "gemini-2.5-pro";
+
+/** Embedding model for semantic search. */
+export const EMBEDDING_MODEL = "text-embedding-004";
 
 /**
- * Vercel AI SDK provider, also pointed at the gateway.
- * Use this for streamText / generateText / useChat.
+ * Tavily search client — for web search inside founder apps.
+ * Use this for real-time information, research features, and RAG pipelines.
  */
-export const ai = createAnthropic({
-  baseURL,
-  apiKey: apiKey ?? "not-set",
-});
+export const TAVILY_API_KEY = process.env.TAVILY_API_KEY ?? "";
+export const TAVILY_API_URL = "https://api.tavily.com";
 
-/** Default model — override per-call if you need Opus or Haiku. */
-export const DEFAULT_MODEL = "claude-sonnet-4-6";
+/**
+ * Search the web via Tavily.
+ * Returns top results with title, URL, and snippet.
+ *
+ * @example
+ * const results = await tavilySearch("latest news on AI agents");
+ */
+export async function tavilySearch(
+  query: string,
+  options?: {
+    maxResults?: number;
+    searchDepth?: "basic" | "advanced";
+    includeAnswer?: boolean;
+  },
+): Promise<{
+  answer?: string;
+  results: Array<{ title: string; url: string; content: string; score: number }>;
+}> {
+  if (!TAVILY_API_KEY) {
+    throw new Error("TAVILY_API_KEY not configured");
+  }
 
-// Re-export the raw provider alias so `import { anthropic as ai } from ...`
-// works if you prefer that style
-export { anthropicProvider as anthropicAISDK };
+  const res = await fetch(`${TAVILY_API_URL}/search`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${TAVILY_API_KEY}`,
+    },
+    body: JSON.stringify({
+      query,
+      max_results: options?.maxResults ?? 5,
+      search_depth: options?.searchDepth ?? "basic",
+      include_answer: options?.includeAnswer ?? false,
+    }),
+  });
+
+  if (!res.ok) {
+    throw new Error(`Tavily search failed: ${res.statusText}`);
+  }
+
+  return res.json();
+}
