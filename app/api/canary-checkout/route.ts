@@ -1,4 +1,3 @@
-import { NextRequest } from "next/server";
 import { db } from "@/db";
 import { canaryBillingAccount, canaryBillingEvent } from "@/db/schema";
 import { eq } from "drizzle-orm";
@@ -9,15 +8,29 @@ const PLAN_PRICES: Record<string, number> = {
   pro: 9900,
   enterprise: 29900,
 };
+const VALID_PLANS = Object.keys(PLAN_PRICES);
 
-export async function POST(req: NextRequest) {
+export async function POST(req: Request) {
   try {
     const body = await req.json();
     const { account_id, plan = "pro", seats = 1 } = body;
 
-    if (!account_id) {
+    if (!account_id || typeof account_id !== "string") {
       return Response.json(
         { ok: false, error: { code: "VALIDATION_ERROR", message: "account_id is required" } },
+        { status: 400 }
+      );
+    }
+    if (!VALID_PLANS.includes(plan)) {
+      return Response.json(
+        { ok: false, error: { code: "VALIDATION_ERROR", message: "plan must be one of: free, starter, pro, enterprise" } },
+        { status: 400 }
+      );
+    }
+    const seatsNum = Number(seats);
+    if (!Number.isInteger(seatsNum) || seatsNum < 1 || seatsNum > 1000) {
+      return Response.json(
+        { ok: false, error: { code: "VALIDATION_ERROR", message: "seats must be an integer between 1 and 1000" } },
         { status: 400 }
       );
     }
@@ -37,7 +50,7 @@ export async function POST(req: NextRequest) {
     }
 
     const hasStripe = !!process.env.STRIPE_SECRET_KEY;
-    const amount = (PLAN_PRICES[plan] ?? PLAN_PRICES.pro) * seats;
+    const amount = (PLAN_PRICES[plan] ?? PLAN_PRICES.pro) * seatsNum;
 
     let checkoutUrl: string | null = null;
     let sessionId: string | null = null;
@@ -47,7 +60,9 @@ export async function POST(req: NextRequest) {
       try {
         const Stripe = (await import("stripe")).default;
         const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
-        const appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://canary-saas-billing-dashboard.onrender.com";
+        const appUrl =
+          process.env.NEXT_PUBLIC_APP_URL ||
+          "https://canary-saas-billing-dashboard.onrender.com";
 
         const session = await stripe.checkout.sessions.create({
           mode: "subscription",
@@ -55,38 +70,38 @@ export async function POST(req: NextRequest) {
             {
               price_data: {
                 currency: "usd",
-                product_data: { name: `${plan.charAt(0).toUpperCase() + plan.slice(1)} Plan — ${seats} seat${seats > 1 ? "s" : ""}` },
+                product_data: {
+                  name: `${plan.charAt(0).toUpperCase() + plan.slice(1)} Plan — ${seatsNum} seat${
+                    seatsNum > 1 ? "s" : ""
+                  }`,
+                },
                 unit_amount: PLAN_PRICES[plan] ?? PLAN_PRICES.pro,
                 recurring: { interval: "month" },
               },
-              quantity: seats,
+              quantity: seatsNum,
             },
           ],
           success_url: `${appUrl}/?checkout=success`,
           cancel_url: `${appUrl}/?checkout=cancelled`,
           customer_email: billingAccount.accountEmail,
-          metadata: { account_id, plan, seats: String(seats) },
+          metadata: { account_id, plan, seats: String(seatsNum) },
         });
         checkoutUrl = session.url;
         sessionId = session.id;
         status = "checkout_initiated";
       } catch (stripeErr) {
-        console.error(JSON.stringify({ level: "error", msg: "Stripe checkout failed", error: stripeErr instanceof Error ? stripeErr.message : String(stripeErr) }));
-        // Fall back gracefully
-        status = "payment_ready";
+        const stripeMsg = stripeErr instanceof Error ? stripeErr.message : String(stripeErr);
+        console.error(
+          JSON.stringify({ level: "error", msg: "Stripe checkout failed", error: stripeMsg })
+        );
+        status = "stripe_error_fallback";
       }
     }
 
     // Update account
     await db
       .update(canaryBillingAccount)
-      .set({
-        plan,
-        seats,
-        billingStatus: status,
-        paymentReady: true,
-        updatedAt: new Date(),
-      })
+      .set({ plan, seats: seatsNum, billingStatus: status, paymentReady: true, updatedAt: new Date() })
       .where(eq(canaryBillingAccount.id, account_id));
 
     // Record checkout event
@@ -94,7 +109,7 @@ export async function POST(req: NextRequest) {
       accountId: account_id,
       eventType: "checkout_initiated",
       plan,
-      seats,
+      seats: seatsNum,
       amount,
       currency: "usd",
       stripeSessionId: sessionId,
@@ -111,7 +126,7 @@ export async function POST(req: NextRequest) {
       checkout: {
         account_id,
         plan,
-        seats,
+        seats: seatsNum,
         amount_cents: amount,
         currency: "usd",
         status,
@@ -123,9 +138,11 @@ export async function POST(req: NextRequest) {
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
-    console.error(JSON.stringify({ level: "error", route: "POST /api/canary-checkout", error: message }));
+    console.error(
+      JSON.stringify({ level: "error", route: "POST /api/canary-checkout", error: message })
+    );
     return Response.json(
-      { ok: false, error: { code: "INTERNAL_ERROR", message } },
+      { ok: false, error: { code: "INTERNAL_ERROR", message: "Internal server error" } },
       { status: 500 }
     );
   }

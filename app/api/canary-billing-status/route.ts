@@ -1,14 +1,10 @@
-import { NextRequest } from "next/server";
 import { db } from "@/db";
 import { canaryBillingAccount, canaryBillingEvent } from "@/db/schema";
 import { desc, sql } from "drizzle-orm";
 
-export async function GET(req: NextRequest) {
+export async function GET() {
   try {
-    const { searchParams } = new URL(req.url);
-    const accountId = searchParams.get("account_id");
-
-    // Aggregate stats
+    // Aggregate stats — no account_id filter (public summary endpoint)
     const statsResult = await db.execute(
       sql`SELECT
         COUNT(*) AS total_accounts,
@@ -32,10 +28,10 @@ export async function GET(req: NextRequest) {
       .select()
       .from(canaryBillingAccount)
       .orderBy(desc(canaryBillingAccount.createdAt))
-      .limit(accountId ? 1 : 10);
+      .limit(10);
 
-    const stats = (statsResult.rows ?? statsResult)[0] as Record<string, unknown>;
-    const eventStats = (eventsResult.rows ?? eventsResult)[0] as Record<string, unknown>;
+    const stats = ((statsResult as { rows?: unknown[] }).rows ?? statsResult)[0] as Record<string, unknown>;
+    const eventStats = ((eventsResult as { rows?: unknown[] }).rows ?? eventsResult)[0] as Record<string, unknown>;
 
     const hasStripe = !!process.env.STRIPE_SECRET_KEY;
 
@@ -46,7 +42,9 @@ export async function GET(req: NextRequest) {
         payment_ready: !hasStripe ? true : undefined,
         total_accounts: Number(stats?.total_accounts ?? 0),
         active_accounts: Number(stats?.active_accounts ?? 0),
-        payment_ready_accounts: Number(stats?.payment_ready_accounts ?? 0) + Number(stats?.payment_ready_count ?? 0),
+        payment_ready_accounts:
+          Number(stats?.payment_ready_accounts ?? 0) +
+          Number(stats?.payment_ready_count ?? 0),
         pro_accounts: Number(stats?.pro_accounts ?? 0),
         enterprise_accounts: Number(stats?.enterprise_accounts ?? 0),
         starter_accounts: Number(stats?.starter_accounts ?? 0),
@@ -66,9 +64,11 @@ export async function GET(req: NextRequest) {
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
-    console.error(JSON.stringify({ level: "error", route: "GET /api/canary-billing-status", error: message }));
+    console.error(
+      JSON.stringify({ level: "error", route: "GET /api/canary-billing-status", error: message })
+    );
     return Response.json(
-      { ok: false, error: { code: "INTERNAL_ERROR", message } },
+      { ok: false, error: { code: "INTERNAL_ERROR", message: "Internal server error" } },
       { status: 500 }
     );
   }
