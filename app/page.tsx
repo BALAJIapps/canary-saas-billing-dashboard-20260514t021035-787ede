@@ -9,7 +9,7 @@ import BillingAccountForm from "@/components/billing-account-form";
 
 async function getBillingStats() {
   try {
-    const statsResult = await db.execute(
+    const statsRows = await db.execute(
       sql`SELECT
         COUNT(*) AS total_accounts,
         COUNT(*) FILTER (WHERE billing_status = 'active') AS active_accounts,
@@ -18,13 +18,16 @@ async function getBillingStats() {
         COUNT(*) FILTER (WHERE plan = 'enterprise') AS enterprise_accounts
       FROM canary_billing_accounts`
     );
-    const eventsResult = await db.execute(
+    const eventsRows = await db.execute(
       sql`SELECT COUNT(*) AS total_events FROM canary_billing_events`
     );
-    const rows = statsResult.rows ?? statsResult;
-    const eventRows = eventsResult.rows ?? eventsResult;
-    const stats = (rows[0] ?? {}) as Record<string, unknown>;
-    const eventStats = (eventRows[0] ?? {}) as Record<string, unknown>;
+
+    const statsArr = Array.isArray(statsRows) ? statsRows : (statsRows as { rows: Record<string, unknown>[] }).rows ?? [];
+    const eventArr = Array.isArray(eventsRows) ? eventsRows : (eventsRows as { rows: Record<string, unknown>[] }).rows ?? [];
+
+    const stats = (statsArr[0] ?? {}) as Record<string, unknown>;
+    const eventStats = (eventArr[0] ?? {}) as Record<string, unknown>;
+
     return {
       totalAccounts: Number(stats.total_accounts ?? 0),
       activeAccounts: Number(stats.active_accounts ?? 0),
@@ -121,7 +124,7 @@ export default async function HomePage() {
         )}
 
         {/* Metric cards */}
-        <div className="grid md:grid-cols-[1fr_1fr_1fr_1fr] gap-4 mb-10">
+        <div className="grid md:grid-cols-4 gap-4 mb-10">
           <Card style={{ border: "1px solid #e5edf5", borderRadius: "6px", boxShadow: "rgba(50,50,93,0.25) 0px 6px 12px -2px, rgba(0,0,0,0.1) 0px 3px 7px -3px" }}>
             <CardContent className="pt-5">
               <div className="flex items-center justify-between mb-3">
@@ -216,7 +219,7 @@ export default async function HomePage() {
         <div className="mb-12">
           <h2 style={{ color: "#061b31", fontSize: "1.5rem", fontWeight: 300, letterSpacing: "-0.48px", marginBottom: "0.375rem" }}>Subscription Plans</h2>
           <p style={{ color: "#64748d", fontSize: "0.875rem", marginBottom: "1.5rem" }}>Choose the plan that fits your team&apos;s needs.</p>
-          <div className="grid md:grid-cols-[1fr_1fr_1.1fr] gap-5">
+          <div className="grid md:grid-cols-3 gap-5">
             {[
               { name: "Starter", price: "$29", period: "/mo", desc: "For early-stage teams getting billing off the ground.", features: ["Up to 5 seats", "Basic reporting", "Email support"], plan: "starter", accent: false },
               { name: "Pro", price: "$99", period: "/mo", desc: "For growing teams that need full billing automation.", features: ["Unlimited seats", "Advanced analytics", "Priority support", "Webhook events"], plan: "pro", accent: true },
@@ -276,12 +279,12 @@ export default async function HomePage() {
         <Card style={{ border: "1px solid #e5edf5", borderRadius: "6px", backgroundColor: "#f8fafc", boxShadow: "rgba(23,23,23,0.06) 0px 3px 6px" }}>
           <CardHeader>
             <CardTitle style={{ color: "#061b31", fontSize: "0.9375rem", fontWeight: 500 }}>Billing Status</CardTitle>
-            <CardDescription style={{ color: "#64748d", fontSize: "0.8125rem" }}>Current system billing configuration and stripe integration status</CardDescription>
+            <CardDescription style={{ color: "#64748d", fontSize: "0.8125rem" }}>Current system billing configuration and payment integration status</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="grid md:grid-cols-3 gap-6">
               <div>
-                <p style={{ color: "#64748d", fontSize: "0.75rem", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: "0.375rem" }}>Stripe Integration</p>
+                <p style={{ color: "#64748d", fontSize: "0.75rem", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: "0.375rem" }}>Payment Integration</p>
                 <div className="flex items-center gap-2">
                   {hasStripe ? (
                     <><CheckCircle className="h-4 w-4" style={{ color: "#15be53" }} /><span style={{ color: "#061b31", fontSize: "0.875rem" }}>Connected</span></>
