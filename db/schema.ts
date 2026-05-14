@@ -77,27 +77,47 @@ export const subscription = pgTable("subscription", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
-/* Webhook idempotency */
 export const stripeEvent = pgTable("stripe_event", {
-  id: text("id").primaryKey(), // Stripe event.id
+  id: text("id").primaryKey(),
   type: text("type").notNull(),
   processedAt: timestamp("processed_at", { withTimezone: true }).notNull().defaultNow(),
   payload: jsonb("payload").notNull(),
 });
 
-/* Example feature table — specialist agents extend/replace this */
-export const todo = pgTable("todo", {
+/* ─────────── Canary billing tables ─────────── */
+
+export const canaryBillingAccount = pgTable("canary_billing_accounts", {
   id: uuid("id").primaryKey().defaultRandom(),
-  userId: text("user_id")
+  accountEmail: text("account_email").notNull(),
+  companyName: text("company_name").notNull(),
+  plan: text("plan").notNull().default("free"),
+  billingStatus: text("billing_status").notNull().default("pending"),
+  stripeCustomerId: text("stripe_customer_id"),
+  stripeSubscriptionId: text("stripe_subscription_id"),
+  paymentReady: boolean("payment_ready").notNull().default(false),
+  seats: integer("seats").notNull().default(1),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const canaryBillingEvent = pgTable("canary_billing_events", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  accountId: uuid("account_id")
     .notNull()
-    .references(() => user.id, { onDelete: "cascade" }),
-  title: text("title").notNull(),
-  completed: boolean("completed").notNull().default(false),
-  sortOrder: integer("sort_order").notNull().default(0),
+    .references(() => canaryBillingAccount.id, { onDelete: "cascade" }),
+  eventType: text("event_type").notNull(),
+  plan: text("plan"),
+  seats: integer("seats"),
+  amount: integer("amount"),
+  currency: text("currency").default("usd"),
+  stripeSessionId: text("stripe_session_id"),
+  status: text("status").notNull().default("pending"),
+  metadata: jsonb("metadata"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 export type User = typeof user.$inferSelect;
 export type Session = typeof session.$inferSelect;
 export type Subscription = typeof subscription.$inferSelect;
-export type Todo = typeof todo.$inferSelect;
+export type CanaryBillingAccount = typeof canaryBillingAccount.$inferSelect;
+export type CanaryBillingEvent = typeof canaryBillingEvent.$inferSelect;
