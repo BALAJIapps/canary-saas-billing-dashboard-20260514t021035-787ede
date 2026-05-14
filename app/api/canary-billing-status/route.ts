@@ -4,8 +4,8 @@ import { desc, sql } from "drizzle-orm";
 
 export async function GET() {
   try {
-    // Aggregate stats — no account_id filter (public summary endpoint)
-    const statsResult = await db.execute(
+    // Use raw SQL via tagged template — rows comes back as an array
+    const statsRows = await db.execute(
       sql`SELECT
         COUNT(*) AS total_accounts,
         COUNT(*) FILTER (WHERE billing_status = 'active') AS active_accounts,
@@ -17,7 +17,7 @@ export async function GET() {
       FROM canary_billing_accounts`
     );
 
-    const eventsResult = await db.execute(
+    const eventRows = await db.execute(
       sql`SELECT COUNT(*) AS total_events,
         COUNT(*) FILTER (WHERE event_type = 'checkout_initiated') AS checkout_events,
         COUNT(*) FILTER (WHERE event_type = 'account_created') AS creation_events
@@ -30,8 +30,13 @@ export async function GET() {
       .orderBy(desc(canaryBillingAccount.createdAt))
       .limit(10);
 
-    const stats = ((statsResult as { rows?: unknown[] }).rows ?? statsResult)[0] as Record<string, unknown>;
-    const eventStats = ((eventsResult as { rows?: unknown[] }).rows ?? eventsResult)[0] as Record<string, unknown>;
+    // Drizzle's execute returns an object with a `rows` array (neon http driver)
+    // or directly an array — handle both shapes safely
+    const statsArr = Array.isArray(statsRows) ? statsRows : (statsRows as { rows: Record<string, unknown>[] }).rows ?? [];
+    const eventArr = Array.isArray(eventRows) ? eventRows : (eventRows as { rows: Record<string, unknown>[] }).rows ?? [];
+
+    const stats = (statsArr[0] ?? {}) as Record<string, unknown>;
+    const eventStats = (eventArr[0] ?? {}) as Record<string, unknown>;
 
     const hasStripe = !!process.env.STRIPE_SECRET_KEY;
 
@@ -40,17 +45,17 @@ export async function GET() {
       billing_status: {
         stripe_mode: hasStripe ? "live" : "fallback",
         payment_ready: !hasStripe ? true : undefined,
-        total_accounts: Number(stats?.total_accounts ?? 0),
-        active_accounts: Number(stats?.active_accounts ?? 0),
+        total_accounts: Number(stats.total_accounts ?? 0),
+        active_accounts: Number(stats.active_accounts ?? 0),
         payment_ready_accounts:
-          Number(stats?.payment_ready_accounts ?? 0) +
-          Number(stats?.payment_ready_count ?? 0),
-        pro_accounts: Number(stats?.pro_accounts ?? 0),
-        enterprise_accounts: Number(stats?.enterprise_accounts ?? 0),
-        starter_accounts: Number(stats?.starter_accounts ?? 0),
-        total_events: Number(eventStats?.total_events ?? 0),
-        checkout_events: Number(eventStats?.checkout_events ?? 0),
-        creation_events: Number(eventStats?.creation_events ?? 0),
+          Number(stats.payment_ready_accounts ?? 0) +
+          Number(stats.payment_ready_count ?? 0),
+        pro_accounts: Number(stats.pro_accounts ?? 0),
+        enterprise_accounts: Number(stats.enterprise_accounts ?? 0),
+        starter_accounts: Number(stats.starter_accounts ?? 0),
+        total_events: Number(eventStats.total_events ?? 0),
+        checkout_events: Number(eventStats.checkout_events ?? 0),
+        creation_events: Number(eventStats.creation_events ?? 0),
       },
       recent_accounts: recentAccounts.map((a) => ({
         id: a.id,
